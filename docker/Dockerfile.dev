@@ -1,0 +1,13 @@
+# Dev/test image, shared by every role (web, worker, test runner) the way rdt's
+# docker/Dockerfile.dev is. Each compose service supplies its own command; there
+# is no default CMD here.
+FROM golang:1.27
+
+WORKDIR /src
+
+# Pre-copy the module files and warm the module cache in its own layer — the Go
+# counterpart of rdt pre-copying requirements/*.txt before pip install. The
+# source tree itself is bind-mounted by docker-compose, not COPYied, so edits
+# don't invalidate this layer.
+COPY go.mod go.sum ./
+RUN go mod download

@@ -1,0 +1,134 @@
+package intermodal
+
+import (
+	"reflect"
+	"testing"
+
+	"github.com/nopalli-io/nopalli/internal/core/domain"
+)
+
+// Shared test support, porting rdt's tests/helpers.py. (rdt's *_committed
+// helpers referenced a non-existent AssignmentStatus.COMMITTED and are dropped.)
+
+// eventTypeNames returns the concrete type name of each event, in order (rdt:
+// types_of).
+func eventTypeNames(events []domain.DomainEvent) []string {
+	out := make([]string, len(events))
+	for i, e := range events {
+		out[i] = reflect.TypeOf(e).Name()
+	}
+	return out
+}
+
+// oneEvent asserts exactly one event of type T is present and returns it (rdt:
+// one).
+func oneEvent[T domain.DomainEvent](t *testing.T, events []domain.DomainEvent) T {
+	t.Helper()
+	var found T
+	count := 0
+	for _, e := range events {
+		if ev, ok := e.(T); ok {
+			found = ev
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly one %T, got %d (events: %v)", found, count, eventTypeNames(events))
+	}
+	return found
+}
+
+// eventTracker captures only the events raised after it was created, so each
+// test sees just its step's events (rdt: EventTracker).
+type eventTracker struct {
+	d    *Dispatch
+	seen int
+}
+
+func trackFrom(d *Dispatch) *eventTracker {
+	return &eventTracker{d: d, seen: len(d.Events())}
+}
+
+func (tr *eventTracker) since() []domain.DomainEvent {
+	all := tr.d.Events()
+	fresh := all[tr.seen:]
+	tr.seen = len(all)
+	return fresh
+}
+
+// assertAgendaItemCompletedBy mirrors assert_agenda_item_completion_by_assignee.
+func assertAgendaItemCompletedBy(t *testing.T, d *Dispatch, id AgendaItemID, by Assignee) {
+	t.Helper()
+	item := d.AgendaItem(id)
+	if item == nil {
+		t.Fatalf("agenda item %v not found", id)
+	}
+	if item.Status() != AgendaItemCompleted {
+		t.Fatalf("agenda item status = %v, want completed", item.Status())
+	}
+	if item.AttributedDriver() != by.Driver {
+		t.Fatalf("attributed driver = %v, want %v", item.AttributedDriver(), by.Driver)
+	}
+	if item.AttributedTruck() != by.Truck {
+		t.Fatalf("attributed truck = %v, want %v", item.AttributedTruck(), by.Truck)
+	}
+}
+
+func assertTypeNames(t *testing.T, events []domain.DomainEvent, want ...string) {
+	t.Helper()
+	got := eventTypeNames(events)
+	if len(got) != len(want) {
+		t.Fatalf("event types = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("event types = %v, want %v", got, want)
+		}
+	}
+}
+
+// assertAssigneeSet checks the dispatch's assignees equal the given set.
+func assertAssigneeSet(t *testing.T, d *Dispatch, want ...Assignee) {
+	t.Helper()
+	got := d.Assignees()
+	if len(got) != len(want) {
+		t.Fatalf("assignees = %v, want %v", got, want)
+	}
+	set := make(map[Assignee]struct{}, len(got))
+	for _, a := range got {
+		set[a] = struct{}{}
+	}
+	for _, w := range want {
+		if _, ok := set[w]; !ok {
+			t.Fatalf("assignees = %v, want %v", got, want)
+		}
+	}
+}
+
+func ptrDriver(d DriverID) *DriverID { return &d }
+func ptrTruck(tk TruckID) *TruckID   { return &tk }
+
+// mkContainer / mkChassis are panic-on-error constructors for use in package-level
+// test fixtures (where *testing.T is not available).
+func mkContainer(s string) ContainerNumber {
+	c, err := NewContainerNumber(s)
+	if err != nil {
+		panic(err)
+	}
+	return c
+}
+
+func mkChassis(s string) ChassisNumber {
+	c, err := NewChassisNumber(s)
+	if err != nil {
+		panic(err)
+	}
+	return c
+}
+
+func mustNoErr(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

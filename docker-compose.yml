@@ -1,0 +1,108 @@
+# docker-compose.yml
+#
+# Mirrors rdt's compose topology so tests run inside a container against the
+# same backing services on one network. Today only the `app` service is needed
+# (the domain layer has pure unit tests); postgres/redis/minio are declared now
+# so integration tests have them on the network as repositories and adapters are
+# ported. Unit tests:        make test-unit
+# Integration tests (later): make test-integration
+services:
+  app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dev
+    working_dir: /src
+    # No long-running server yet. `sleep infinity` keeps the container up for
+    # `docker compose run`/`exec`; every real invocation overrides the command
+    # (e.g. `run --rm app go test ...`), exactly as rdt's test runner does.
+    command: ["sleep", "infinity"]
+    volumes:
+      - .:/src
+      # Persist the Go build and module caches across runs so containerized
+      # `go test` isn't recompiling the world each time. (rdt needs no such
+      # volume; Go does.)
+      - go-build-cache:/root/.cache/go-build
+      - go-mod-cache:/go/pkg/mod
+    environment:
+      # Reachable once integration tests arrive; harmless until then.
+      DB_URL: postgres://nopalli:nopalli@postgres:5432/nopalli?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+    networks:
+      - nopalli
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: nopalli
+      POSTGRES_PASSWORD: nopalli
+      POSTGRES_DB: nopalli
+    # No host port published by default: tests run in the `app` container and
+    # reach this over the compose network (host:`postgres`). Publish a port
+    # locally (e.g. "55432:5432") only if you need psql from the host, choosing
+    # one that doesn't clash with another stack's Postgres.
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nopalli -d nopalli"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nopalli
+
+  redis:
+    image: redis:7-alpine
+    # No host port by default (see postgres); reached in-network as host:`redis`.
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nopalli
+
+  minio:
+    # S3-compatible object storage for local dev/test (rdt uses the same mirror;
+    # MinIO's own public images were gated in late 2025).
+    image: pgsty/minio:latest
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: nopalli
+      MINIO_ROOT_PASSWORD: nopallisecret
+    ports:
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - nopalli
+
+  createbuckets:
+    # One-shot bucket bootstrap, then exits (rdt pattern).
+    image: pgsty/mc:latest
+    depends_on:
+      - minio
+    environment:
+      MINIO_ROOT_USER: nopalli
+      MINIO_ROOT_PASSWORD: nopallisecret
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        until mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"; do
+          echo "waiting for minio..."; sleep 1;
+        done
+        mc mb --ignore-existing local/nopalli-dev
+        mc anonymous set none local/nopalli-dev
+        echo "bucket nopalli-dev ready"
+    networks:
+      - nopalli
+
+volumes:
+  postgres_data:
+  minio_data:
+  go-build-cache:
+  go-mod-cache:
+
+networks:
+  nopalli:
+    driver: bridge
