@@ -1,0 +1,11 @@
+# Binaries and build output
+/bin/
+*.exe
+*.out
+
+# Go test / coverage artifacts
+*.test
+coverage.out
+
+# Local env overrides
+*.env.local
