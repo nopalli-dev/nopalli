@@ -77,6 +77,20 @@ Known items to address when their code is ported:
   `while_in_progress` code);
 - `live_assignee` dereferences the current assignment without a nil guard.
 
+## Application layer — thin orchestration over consumer-defined ports
+
+The application service (`operations/application`) holds no business rules: each
+command guards by permission, runs a `UnitOfWork`, loads or builds the
+aggregate, invokes exactly one domain method, and saves. It depends only on
+small interfaces it defines itself — `Repository`, `UnitOfWork` (which yields a
+tx-bound `Repository`), `AccessControl` — so the layer has **no infrastructure
+imports**; the pgx adapters in `operations/infrastructure/db` satisfy them. Events
+recorded by the aggregate are written in the same transaction via the
+repository's `EventRecorder` seam, so there is no separate post-commit publish.
+(Deferred from rdt for now: the availability-policy check in `Start`, and the
+inbox-idempotent `queue_dispatch` intake — the manual `CreateDispatch` path is
+ported.)
+
 ## Persistence — hand-written Data Mapper, no ORM
 
 nopalli **owns its own database and migrations** (it does not share rdt's DB).
